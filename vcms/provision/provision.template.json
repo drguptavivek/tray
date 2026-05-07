@@ -1,0 +1,14 @@
+[
+	{
+		"description": "Trust the VCMS QZ root CA for browser message certificates",
+		"type": "ca",
+		"phase": "certgen",
+		"data": "vcms-root-ca.crt"
+	},
+	{
+		"description": "Restrict browser certificate trust to configured override CAs",
+		"type": "preference",
+		"phase": "startup",
+		"data": "tray.strictmode=true"
+	}
+]
