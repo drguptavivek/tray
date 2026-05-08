@@ -30,13 +30,16 @@ import qz.ws.WebsocketPorts;
 import qz.ws.substitutions.Substitutions;
 
 import javax.swing.*;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.KeyEvent;
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Map;
 import java.util.TimerTask;
 import java.util.concurrent.TimeUnit;
 
@@ -326,6 +329,21 @@ public class TrayManager {
         desktopItem.setMnemonic(KeyEvent.VK_D);
         desktopItem.addActionListener(desktopListener());
 
+        JMenuItem importRootCAItem = new JMenuItem("Import trusted root CA...", iconCache.getIcon(FOLDER_ICON));
+        importRootCAItem.setMnemonic(KeyEvent.VK_I);
+        importRootCAItem.setToolTipText("Import browser-app root CA certificates into ~/.qz/trusted-root-certs");
+        importRootCAItem.addActionListener(importTrustedRootCAListener);
+
+        JMenuItem pasteRootCAItem = new JMenuItem("Paste trusted root CA PEM...", iconCache.getIcon(FIELD_ICON));
+        pasteRootCAItem.setMnemonic(KeyEvent.VK_P);
+        pasteRootCAItem.setToolTipText("Paste a browser-app root CA PEM into ~/.qz/trusted-root-certs");
+        pasteRootCAItem.addActionListener(pasteTrustedRootCAListener);
+
+        JMenuItem listRootCAItem = new JMenuItem("Trusted root CAs...", iconCache.getIcon(SAVED_ICON));
+        listRootCAItem.setMnemonic(KeyEvent.VK_T);
+        listRootCAItem.setToolTipText("List imported browser-app root CA certificates");
+        listRootCAItem.addActionListener(listTrustedRootCAListener);
+
         anonymousItem = new JCheckBoxMenuItem("Block anonymous requests");
         anonymousItem.setToolTipText("Blocks all requests that do not contain a valid certificate/signature");
         anonymousItem.setMnemonic(KeyEvent.VK_K);
@@ -338,6 +356,9 @@ public class TrayManager {
         }
         advancedMenu.add(sitesItem);
         advancedMenu.add(desktopItem);
+        advancedMenu.add(importRootCAItem);
+        advancedMenu.add(pasteRootCAItem);
+        advancedMenu.add(listRootCAItem);
         advancedMenu.add(new JSeparator());
         advancedMenu.add(anonymousItem);
 
@@ -433,6 +454,137 @@ public class TrayManager {
         @Override
         public void actionPerformed(ActionEvent e) {
             logDialog.setVisible(true);
+        }
+    };
+
+    private final ActionListener importTrustedRootCAListener = new ActionListener() {
+        @Override
+        public void actionPerformed(ActionEvent e) {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setDialogTitle("Import trusted browser-app root CA");
+            chooser.setMultiSelectionEnabled(true);
+            chooser.setFileFilter(new FileNameExtensionFilter("Certificate files (*.crt, *.pem, *.cer)", "crt", "pem", "cer"));
+
+            if (chooser.showOpenDialog(null) != JFileChooser.APPROVE_OPTION) {
+                return;
+            }
+
+            File[] selectedFiles = chooser.getSelectedFiles();
+            if (selectedFiles.length == 0 && chooser.getSelectedFile() != null) {
+                selectedFiles = new File[] { chooser.getSelectedFile() };
+            }
+
+            if (!confirmDialog.prompt("Trust the selected root CA certificate(s) for browser app authorization?")) {
+                return;
+            }
+
+            int imported = 0;
+            StringBuilder failures = new StringBuilder();
+            for(File file : selectedFiles) {
+                try {
+                    Certificate cert = Certificate.importTrustedRootCA(file.toPath());
+                    imported++;
+                    log.info("Imported trusted browser-app root CA: CN={}, O={} ({})",
+                             cert.getCommonName(), cert.getOrganization(), cert.getFingerprint());
+                }
+                catch(Exception ex) {
+                    log.error("Failed to import trusted browser-app root CA: {}", file, ex);
+                    failures.append(file.getName()).append(": ").append(ex.getMessage()).append("\n");
+                }
+            }
+
+            if (imported > 0) {
+                displayInfoMessage(String.format("Imported %d trusted root CA certificate(s) into %s",
+                                                 imported, Certificate.getTrustedRootCertDirectory()));
+            }
+            if (failures.length() > 0) {
+                showErrorDialog("Some certificates could not be imported:\n" + failures);
+            }
+        }
+    };
+
+    private final ActionListener pasteTrustedRootCAListener = new ActionListener() {
+        @Override
+        public void actionPerformed(ActionEvent e) {
+            JTextArea textArea = new JTextArea(16, 72);
+            textArea.setLineWrap(false);
+            textArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+
+            JPanel panel = new JPanel(new BorderLayout(0, 8));
+            panel.add(new JLabel("Paste a Root CA PEM certificate. Leaf/digital certificates will be rejected."), BorderLayout.NORTH);
+            panel.add(new JScrollPane(textArea), BorderLayout.CENTER);
+
+            int result = JOptionPane.showConfirmDialog(null, panel, "Paste trusted root CA PEM", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+            if (result != JOptionPane.OK_OPTION) {
+                return;
+            }
+
+            String pem = textArea.getText();
+            if (pem == null || pem.trim().isEmpty()) {
+                showErrorDialog("No certificate PEM was provided.");
+                return;
+            }
+
+            if (!confirmDialog.prompt("Trust this root CA certificate for browser app authorization?")) {
+                return;
+            }
+
+            try {
+                Certificate cert = Certificate.importTrustedRootCAPem(pem);
+                log.info("Imported pasted trusted browser-app root CA: CN={}, O={} ({})",
+                         cert.getCommonName(), cert.getOrganization(), cert.getFingerprint());
+                displayInfoMessage(String.format("Imported trusted root CA into %s", Certificate.getTrustedRootCertDirectory()));
+            }
+            catch(Exception ex) {
+                log.error("Failed to import pasted trusted browser-app root CA", ex);
+                showErrorDialog("The pasted certificate could not be imported:\n" + ex.getMessage());
+            }
+        }
+    };
+
+    private final ActionListener listTrustedRootCAListener = new ActionListener() {
+        @Override
+        public void actionPerformed(ActionEvent e) {
+            ArrayList<Map.Entry<Path, Certificate>> certs = Certificate.getImportedTrustedRootCAs();
+            if (certs.isEmpty()) {
+                JOptionPane.showMessageDialog(null,
+                                              "No imported trusted root CA certificates were found in\n" + Certificate.getTrustedRootCertDirectory(),
+                                              name,
+                                              JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+
+            String[] columns = { "Common Name", "Organization", "Valid From", "Valid To", "Fingerprint", "File" };
+            String[][] rows = new String[certs.size()][columns.length];
+            for(int i = 0; i < certs.size(); i++) {
+                Certificate cert = certs.get(i).getValue();
+                Path path = certs.get(i).getKey();
+                rows[i][0] = cert.getCommonName();
+                rows[i][1] = cert.getOrganization();
+                rows[i][2] = cert.getValidFrom();
+                rows[i][3] = cert.getValidTo();
+                rows[i][4] = cert.getFingerprint();
+                rows[i][5] = path.getFileName().toString();
+            }
+
+            JTable table = new JTable(rows, columns);
+            table.setAutoCreateRowSorter(true);
+            table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
+            table.getColumnModel().getColumn(0).setPreferredWidth(180);
+            table.getColumnModel().getColumn(1).setPreferredWidth(180);
+            table.getColumnModel().getColumn(2).setPreferredWidth(145);
+            table.getColumnModel().getColumn(3).setPreferredWidth(145);
+            table.getColumnModel().getColumn(4).setPreferredWidth(300);
+            table.getColumnModel().getColumn(5).setPreferredWidth(260);
+
+            JScrollPane scrollPane = new JScrollPane(table);
+            scrollPane.setPreferredSize(new Dimension(950, 260));
+
+            JPanel panel = new JPanel(new BorderLayout(0, 8));
+            panel.add(new JLabel("Imported trusted browser-app root CAs in " + Certificate.getTrustedRootCertDirectory()), BorderLayout.NORTH);
+            panel.add(scrollPane, BorderLayout.CENTER);
+
+            JOptionPane.showMessageDialog(null, panel, name, JOptionPane.INFORMATION_MESSAGE);
         }
     };
 
