@@ -7,6 +7,7 @@ import org.eclipse.jetty.servlet.DefaultServlet;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.eclipse.jetty.servlet.FilterHolder;
+import qz.auth.Certificate;
 import qz.common.AboutInfo;
 import qz.installer.apps.locator.AppFamily;
 import qz.installer.certificate.CertificateManager;
@@ -18,9 +19,12 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 
 import static qz.common.Constants.*;
@@ -51,7 +55,9 @@ public class HttpAboutServlet extends DefaultServlet {
     @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response) {
         response.setHeader("Access-Control-Allow-Origin", allowOrigin);
-        if ("application/json".equals(request.getHeader("Accept")) || "/json".equals(request.getServletPath())) {
+        if ("/trusted-root-cas".equals(request.getServletPath()) || "/trusted-root-cas.json".equals(request.getServletPath())) {
+            generateTrustedRootCAsResponse(response);
+        } else if ("application/json".equals(request.getHeader("Accept")) || "/json".equals(request.getServletPath())) {
             generateJsonResponse(request, response);
         } else if ("application/x-x509-ca-cert".equals(request.getHeader("Accept")) || request.getServletPath().startsWith("/cert/")) {
             generateCertResponse(request, response);
@@ -179,6 +185,60 @@ public class HttpAboutServlet extends DefaultServlet {
             response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
             log.warn("Exception occurred writing JSONObject {}", aboutData);
         }
+    }
+
+    private void generateTrustedRootCAsResponse(HttpServletResponse response) {
+        JSONObject data = new JSONObject();
+
+        try {
+            data.put("trustBuiltIn", Certificate.isTrustBuiltIn());
+            data.put("trustedRootCertDirectory", Certificate.getTrustedRootCertDirectory().toString());
+            data.put("activeRootCAs", activeRootCAsJson());
+            data.put("importedRootCAs", importedRootCAsJson());
+
+            response.setStatus(HttpServletResponse.SC_OK);
+            response.setContentType("application/json");
+            response.getOutputStream().write(data.toString(JSON_INDENT).getBytes(StandardCharsets.UTF_8));
+        }
+        catch(Exception e) {
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            log.warn("Exception occurred writing trusted root CA JSON {}", data, e);
+        }
+    }
+
+    private JSONArray activeRootCAsJson() throws JSONException {
+        JSONArray rootCAs = new JSONArray();
+        for(Certificate cert : Certificate.rootCAs) {
+            JSONObject data = certificateJson(cert);
+            data.put("builtIn", Certificate.builtIn.equals(cert));
+            data.put("source", Certificate.builtIn.equals(cert) ? "built-in" : "active");
+            rootCAs.put(data);
+        }
+        return rootCAs;
+    }
+
+    private JSONArray importedRootCAsJson() throws JSONException {
+        JSONArray importedRootCAs = new JSONArray();
+        ArrayList<Map.Entry<Path, Certificate>> certs = Certificate.getImportedTrustedRootCAs();
+        for(Map.Entry<Path, Certificate> entry : certs) {
+            JSONObject data = certificateJson(entry.getValue());
+            data.put("source", "imported");
+            data.put("file", entry.getKey().getFileName().toString());
+            data.put("path", entry.getKey().toString());
+            importedRootCAs.put(data);
+        }
+        return importedRootCAs;
+    }
+
+    private JSONObject certificateJson(Certificate cert) throws JSONException {
+        JSONObject data = new JSONObject();
+        data.put("commonName", cert.getCommonName());
+        data.put("organization", cert.getOrganization());
+        data.put("fingerprint", cert.getFingerprint());
+        data.put("validFrom", cert.getValidFrom());
+        data.put("validTo", cert.getValidTo());
+        data.put("certificateAuthority", cert.isCertificateAuthority());
+        return data;
     }
 
     private void generateCertResponse(HttpServletRequest request, HttpServletResponse response) {
