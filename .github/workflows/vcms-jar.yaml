@@ -1,0 +1,24 @@
+name: vcms-jar
+
+# Builds only qz-tray.jar from this fork. Install upstream's signed QZ Tray, then swap this jar in
+# (vcms/install-vcms-jar.ps1). Windows Smart App Control only checks .exe/.dll, which stay upstream-signed.
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  jar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-java@v3
+        with:
+          java-version: 11
+          distribution: 'liberica'
+      - run: ant distribute
+      - run: sha256sum out/dist/qz-tray.jar | tee out/dist/qz-tray.jar.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qz-tray-vcms-jar
+          path: |
+            out/dist/qz-tray.jar
+            out/dist/qz-tray.jar.sha256
+            vcms/install-vcms-jar.ps1

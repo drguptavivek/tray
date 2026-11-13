@@ -17,8 +17,6 @@
             <include name="**/*.dll"/>
             <include name="**/*.exe"/>
             <exclude name="provision/**"/>
-            <!-- Keep the JRE vendor's original signatures; re-signing with a self-signed cert makes Smart App Control block zip.dll/java.dll -->
-            <exclude name="runtime/**"/>
         </fileset>
         <!-- Pass all files at once, wrapped in quotes -->
         <pathconvert pathsep="&quot; &quot;" property="win.sign.separated" refid="win.sign.found"/>
