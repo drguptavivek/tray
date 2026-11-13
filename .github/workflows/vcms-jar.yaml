@@ -22,3 +22,26 @@ jobs:
             out/dist/qz-tray.jar
             out/dist/qz-tray.jar.sha256
             vcms/install-vcms-jar.ps1
+
+  windows-swap:
+    needs: jar
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/download-artifact@v4
+        with:
+          name: qz-tray-vcms-jar
+          path: dl
+      - shell: pwsh
+        run: |
+          Invoke-WebRequest https://github.com/qzind/tray/releases/download/v2.2.6/qz-tray-2.2.6-x86_64.exe -OutFile up.exe
+          $s = Get-AuthenticodeSignature up.exe; "$($s.Status) $($s.SignerCertificate.Subject)"
+          if ($s.Status -ne 'Valid') { throw 'upstream installer signature not valid' }
+          Start-Process -Wait .\up.exe -ArgumentList '/S'
+          # Upstream runtime DLLs should be signed
+          Get-ChildItem 'C:/Program Files/QZ Tray/runtime/bin' -Filter *.dll | Where-Object { $_.Name -in 'zip.dll','java.dll' } | ForEach-Object { "$($_.Name) $((Get-AuthenticodeSignature $_).Status)" }
+          .\vcms\install-vcms-jar.ps1 -Jar .\dl\qz-tray.jar
+          $v = $null
+          foreach ($i in 1..30) { Start-Sleep 2; try { $v = (Invoke-WebRequest http://localhost:8182/ -UseBasicParsing).Content; break } catch {} }
+          if ($v -notmatch '2\.2\.6\+vcms\.1') { throw "About page did not report the VCMS build: $v" }
+          'OK: upstream-signed QZ Tray running the VCMS jar'
