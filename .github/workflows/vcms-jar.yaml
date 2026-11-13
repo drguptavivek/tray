@@ -40,7 +40,7 @@ jobs:
           Start-Process -Wait .\up.exe -ArgumentList '/S'
           # Upstream runtime DLLs should be signed
           Get-ChildItem 'C:/Program Files/QZ Tray/runtime/bin' -Filter *.dll | Where-Object { $_.Name -in 'zip.dll','java.dll' } | ForEach-Object { "$($_.Name) $((Get-AuthenticodeSignature $_).Status)" }
-          .\vcms\install-vcms-jar.ps1 -Jar .\dl\qz-tray.jar
+          .\vcms\install-vcms-jar.ps1 -Jar (Get-ChildItem dl -Recurse -Filter qz-tray.jar).FullName
           $v = $null
           foreach ($i in 1..30) { Start-Sleep 2; try { $v = (Invoke-WebRequest http://localhost:8182/ -UseBasicParsing).Content; break } catch {} }
           if ($v -notmatch '<td>version</td>\s*<td>2\.3\.0</td>') { throw "About page did not report version 2.3.0: $v" }
