@@ -2,7 +2,13 @@ name: vcms-jar
 
 # Builds only qz-tray.jar from this fork. Install upstream's signed QZ Tray, then swap this jar in
 # (vcms/install-vcms-jar.ps1). Windows Smart App Control only checks .exe/.dll, which stay upstream-signed.
-on: [push, pull_request, workflow_dispatch]
+# Runs only by hand (Actions > vcms-jar > Run workflow) or when a release tag is pushed, e.g.
+#   git tag v2.3.0-vcms.1 && git push origin v2.3.0-vcms.1
+# A tag run also publishes a GitHub release with the zip, jar and signed DMGs attached.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
 
 jobs:
   jar:
@@ -131,3 +137,22 @@ jobs:
         with:
           name: qz-tray-vcms-macos-${{ matrix.arch }}
           path: out/*.dmg
+
+  release:
+    if: ${{ startsWith(github.ref, 'refs/tags/') && !failure() && !cancelled() }}
+    needs: [jar, windows-swap, portable-zip, macos-dmg]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          find dist -type f
+          gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \
+            --notes "VCMS build of QZ Tray. Windows: unzip and run install-from-zip.ps1 as Administrator (upstream-signed exe/dll + VCMS jar). macOS: signed and notarized DMG." \
+            $(find dist -type f \( -name '*.zip' -o -name '*.dmg' -o -name 'qz-tray.jar*' -o -name 'install-vcms-jar.ps1' \))
