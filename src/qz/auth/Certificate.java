@@ -16,8 +16,7 @@ import qz.common.Constants;
 import qz.utils.*;
 
 import java.io.*;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.nio.file.*;
 import java.security.*;
 import java.security.cert.*;
 import java.time.DateTimeException;
@@ -144,20 +143,14 @@ public class Certificate {
         // Second, look for "override.crt" within App directory
         certPaths.add(new AbstractMap.SimpleEntry<>(SystemUtilities.getJarParentPath().resolve(Constants.OVERRIDE_CERT), QUIETLY_FAIL));
 
+        // Third, look for user-imported browser app root CAs
+        certPaths.addAll(getTrustedRootCertPaths());
+
         for(Map.Entry<Path, String> certPath : certPaths) {
             if(certPath.getKey() != null) {
                 if (certPath.getKey().toFile().exists()) {
                     try {
-                        Certificate caCert = new Certificate(FileUtilities.readLocalFile(certPath.getKey()));
-                        caCert.rootCA = true;
-                        caCert.valid = true;
-                        if(!rootCAs.contains(caCert)) {
-                            log.debug("Adding CA certificate: CN={}, O={} ({})",
-                                      caCert.getCommonName(), caCert.getOrganization(), caCert.getFingerprint());
-                            rootCAs.add(caCert);
-                        } else {
-                            log.warn("CA cert exists, skipping: {}", certPath.getKey());
-                        }
+                        addRootCA(certPath.getKey());
                     }
                     catch(Exception e) {
                         log.error("Error loading CA cert: {}", certPath.getKey(), e);
@@ -167,6 +160,95 @@ public class Certificate {
                 }
             }
         }
+    }
+
+    public static Path getTrustedRootCertDirectory() {
+        return Paths.get(System.getProperty("user.home"), ".qz", Constants.TRUSTED_ROOT_CERT_DIR);
+    }
+
+    public static ArrayList<Map.Entry<Path, String>> getTrustedRootCertPaths() {
+        ArrayList<Map.Entry<Path, String>> certPaths = new ArrayList<>();
+        Path certDir = getTrustedRootCertDirectory();
+        if (!Files.isDirectory(certDir)) {
+            return certPaths;
+        }
+
+        try(DirectoryStream<Path> stream = Files.newDirectoryStream(certDir, path -> {
+            String filename = path.getFileName().toString().toLowerCase(Locale.ROOT);
+            return Files.isRegularFile(path) &&
+                    (filename.endsWith(".crt") || filename.endsWith(".pem") || filename.endsWith(".cer"));
+        })) {
+            for(Path path : stream) {
+                certPaths.add(new AbstractMap.SimpleEntry<>(path, QUIETLY_FAIL));
+            }
+        }
+        catch(IOException e) {
+            log.error("Error scanning trusted root certificate directory: {}", certDir, e);
+        }
+
+        return certPaths;
+    }
+
+    public static Certificate importTrustedRootCA(Path source) throws IOException, CertificateException {
+        return importTrustedRootCAPem(FileUtilities.readLocalFile(source));
+    }
+
+    public static Certificate importTrustedRootCAPem(String pem) throws IOException, CertificateException {
+        Certificate caCert = loadRootCA(pem);
+        Path destination = writeTrustedRootCA(caCert, pem);
+
+        log.debug("Imported CA certificate to {}, rescanning trusted root CAs", destination);
+        scanAdditionalCAs();
+
+        return caCert;
+    }
+
+    public static ArrayList<Map.Entry<Path, Certificate>> getImportedTrustedRootCAs() {
+        ArrayList<Map.Entry<Path, Certificate>> certs = new ArrayList<>();
+        for(Map.Entry<Path, String> certPath : getTrustedRootCertPaths()) {
+            try {
+                certs.add(new AbstractMap.SimpleEntry<>(certPath.getKey(), loadRootCA(certPath.getKey())));
+            }
+            catch(Exception e) {
+                log.error("Error loading imported trusted root CA: {}", certPath.getKey(), e);
+            }
+        }
+        return certs;
+    }
+
+    private static Path writeTrustedRootCA(Certificate caCert, String pem) throws IOException {
+        Path destinationDir = getTrustedRootCertDirectory();
+        Files.createDirectories(destinationDir);
+
+        Path destination = destinationDir.resolve(caCert.getFingerprint() + ".crt");
+        Files.write(destination, (pem.trim() + System.lineSeparator()).getBytes(Charsets.UTF_8), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+        return destination;
+    }
+
+    private static Certificate addRootCA(Path path) throws IOException, CertificateException {
+        Certificate caCert = loadRootCA(path);
+        if(!rootCAs.contains(caCert)) {
+            log.debug("Adding CA certificate: CN={}, O={} ({})",
+                      caCert.getCommonName(), caCert.getOrganization(), caCert.getFingerprint());
+            rootCAs.add(caCert);
+        } else {
+            log.warn("CA cert exists, skipping: {}", path);
+        }
+        return caCert;
+    }
+
+    private static Certificate loadRootCA(Path path) throws IOException, CertificateException {
+        return loadRootCA(FileUtilities.readLocalFile(path));
+    }
+
+    private static Certificate loadRootCA(String pem) throws CertificateException {
+        Certificate caCert = new Certificate(pem);
+        if(!caCert.isCertificateAuthority()) {
+            throw new CertificateException("Certificate is not a root CA certificate.");
+        }
+        caCert.rootCA = true;
+        caCert.valid = true;
+        return caCert;
     }
 
     public Certificate(Path path) throws IOException, CertificateException {
@@ -448,6 +530,10 @@ public class Certificate {
 
     public Instant getValidToDate() {
         return validTo;
+    }
+
+    public boolean isCertificateAuthority() {
+        return theCertificate != null && theCertificate.getBasicConstraints() >= 0;
     }
 
     /**

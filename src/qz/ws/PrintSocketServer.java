@@ -107,6 +107,8 @@ public class PrintSocketServer {
 
                 context.addServlet(httpServlet, "/");
                 context.addServlet(httpServlet, "/json");
+                context.addServlet(httpServlet, "/trusted-root-cas");
+                context.addServlet(httpServlet, "/trusted-root-cas.json");
 
                 server.setHandler(context);
                 server.setStopAtShutdown(true);

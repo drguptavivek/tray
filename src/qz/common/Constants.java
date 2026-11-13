@@ -78,6 +78,7 @@ public class Constants {
     public static final String BLOCKED = "Blocked";
 
     public static final String OVERRIDE_CERT = "override.crt";
+    public static final String TRUSTED_ROOT_CERT_DIR = "trusted-root-certs";
     public static final String WHITELIST_CERT_DIR = "whitelist";
     public static final String PROVISION_DIR = "provision";
     public static final String PROVISION_FILE = "provision.json";
