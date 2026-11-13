@@ -92,10 +92,12 @@ jobs:
           ant testng
           Start-Process -Wait ./out/qz-tray-*.exe -ArgumentList "/S"
           "&'C:/Program Files/QZ Tray/qz-tray.exe' --wait --version|Out-Null"
-      - if: ${{ matrix.arch == 'x86_64' }}
+      - if: ${{ always() && matrix.arch == 'x86_64' }}
         name: Report runtime DLL signatures
         shell: pwsh
         run: |
+          # Install here too, so this still runs if the browser/test step above fails
+          if (-not (Test-Path 'C:/Program Files/QZ Tray')) { Start-Process -Wait (Get-ChildItem ./out/qz-tray-*.exe).FullName -ArgumentList '/S' }
           $f = Get-ChildItem 'C:/Program Files/QZ Tray' -Recurse -Include zip.dll,java.dll,qz-tray.exe
           $s = $f | ForEach-Object { $a = Get-AuthenticodeSignature $_; [pscustomobject]@{ File = $_.FullName; Status = $a.Status; Signer = $a.SignerCertificate.Subject } }
           $s | Format-List
