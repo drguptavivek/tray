@@ -92,5 +92,15 @@ jobs:
           ant testng
           Start-Process -Wait ./out/qz-tray-*.exe -ArgumentList "/S"
           "&'C:/Program Files/QZ Tray/qz-tray.exe' --wait --version|Out-Null"
+      - if: ${{ matrix.arch == 'x86_64' }}
+        name: Report runtime DLL signatures
+        shell: pwsh
+        run: |
+          $f = Get-ChildItem 'C:/Program Files/QZ Tray' -Recurse -Include zip.dll,java.dll,qz-tray.exe
+          $s = $f | ForEach-Object { $a = Get-AuthenticodeSignature $_; [pscustomobject]@{ File = $_.FullName; Status = $a.Status; Signer = $a.SignerCertificate.Subject } }
+          $s | Format-List
+          # Runtime DLLs must keep the JRE vendor's valid signature (qz-tray.exe is self-signed for now)
+          $bad = $s | Where-Object { $_.File -like '*runtime*' -and $_.Status -ne 'Valid' }
+          if ($bad) { throw "Runtime DLLs without a valid signature: $($bad.File -join ', ')" }
 
 
