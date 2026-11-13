@@ -79,3 +79,55 @@ jobs:
         with:
           name: qz-tray-vcms-portable
           path: qz-tray-vcms-2.3.0-windows-x86_64.zip
+
+  # Full macOS build signed with your own Developer ID, then notarized + stapled.
+  # Off until repo variable MAC_SIGNING=true and these secrets exist:
+  #   MACOS_CERT_P12_BASE64  base64 of the "Developer ID Application" cert + key exported as .p12
+  #   MACOS_CERT_PASSWORD    password of that .p12
+  #   APPLE_TEAM_ID          10-character Team ID
+  #   APPLE_ID               Apple ID email used for notarization
+  #   APPLE_APP_PASSWORD     app-specific password for that Apple ID (appleid.apple.com)
+  macos-dmg:
+    if: ${{ vars.MAC_SIGNING == 'true' }}
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-java@v3
+        with:
+          java-version: 25
+          distribution: 'liberica'
+      - name: Import Developer ID certificate into a temporary keychain
+        env:
+          P12: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          P12_PASS: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KC=$RUNNER_TEMP/signing.keychain-db; KC_PASS=$(uuidgen)
+          echo "$P12" | base64 --decode > $RUNNER_TEMP/cert.p12
+          security create-keychain -p "$KC_PASS" $KC
+          security set-keychain-settings -lut 21600 $KC
+          security unlock-keychain -p "$KC_PASS" $KC
+          security import $RUNNER_TEMP/cert.p12 -P "$P12_PASS" -A -t cert -f pkcs12 -k $KC
+          security set-key-partition-list -S apple-tool:,apple: -k "$KC_PASS" $KC > /dev/null
+          security list-keychains -d user -s $KC $(security list-keychains -d user | tr -d '"')
+          rm $RUNNER_TEMP/cert.p12
+          security find-identity -v -p codesigning $KC
+      - run: npm install -g appdmg
+      - run: ant -Dtarget.arch=${{ matrix.arch }} -Dapple.packager.signid=${{ secrets.APPLE_TEAM_ID }} dmg
+      - name: Verify signature is ours, not ad-hoc
+        run: |
+          APP=$(find out -maxdepth 3 -name "*.app" -type d | head -1)
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv "$APP" 2>&1 | grep -q "TeamIdentifier=${{ secrets.APPLE_TEAM_ID }}" || { echo "not signed with your Team ID"; exit 1; }
+      - name: Notarize and staple
+        run: |
+          DMG=$(ls out/*.dmg | head -1)
+          xcrun notarytool submit "$DMG" --apple-id "${{ secrets.APPLE_ID }}" --team-id "${{ secrets.APPLE_TEAM_ID }}" --password "${{ secrets.APPLE_APP_PASSWORD }}" --wait
+          xcrun stapler staple "$DMG"
+          spctl -a -t open --context context:primary-signature -v "$DMG"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qz-tray-vcms-macos-${{ matrix.arch }}
+          path: out/*.dmg
