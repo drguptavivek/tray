@@ -50,6 +50,7 @@ jobs:
     needs: jar
     runs-on: windows-latest
     steps:
+      - uses: actions/checkout@v3
       - uses: actions/download-artifact@v4
         with:
           name: qz-tray-vcms-jar
@@ -58,20 +59,22 @@ jobs:
         run: |
           Invoke-WebRequest https://github.com/qzind/tray/releases/download/v2.3.0/qz-tray-2.3.0-x86_64.exe -OutFile up.exe
           if ((Get-AuthenticodeSignature up.exe).Status -ne 'Valid') { throw 'upstream installer signature not valid' }
-          7z x up.exe -oqz-tray -y | Select-Object -Last 3
-          Get-ChildItem qz-tray | Select-Object -First 30 | Format-Table Name, Length
-          # NSIS bookkeeping dirs are not part of the app
-          Remove-Item qz-tray/'$PLUGINSDIR', qz-tray/'$_OUTDIR', qz-tray/'[NSIS].nsi' -Recurse -Force -ErrorAction SilentlyContinue
+          7z x up.exe -oex -y | Select-Object -Last 3
+          # the installer's files live in $PLUGINSDIR/payload
+          Move-Item "ex/`$PLUGINSDIR/payload" qz-tray
+          Get-ChildItem qz-tray | Format-Table Name
           Copy-Item (Get-ChildItem dl -Recurse -Filter qz-tray.jar).FullName qz-tray/qz-tray.jar -Force
+          Copy-Item vcms/install-from-zip.ps1 qz-tray/
           # every exe/dll must keep a valid upstream signature
-          Get-ChildItem qz-tray -Recurse -Include *.exe,*.dll | ForEach-Object { [pscustomobject]@{ F = $_.FullName.Substring($PWD.Path.Length); S = (Get-AuthenticodeSignature $_).Status } } | Group-Object S | Format-Table Name, Count
-          Compress-Archive qz-tray qz-tray-vcms-2.3.0-windows-x86_64.zip
-          # run from the extracted folder
-          $p = Start-Process qz-tray/qz-tray.exe -PassThru
+          Get-ChildItem qz-tray -Recurse -Include *.exe,*.dll | ForEach-Object { (Get-AuthenticodeSignature $_).Status } | Group-Object | Format-Table Name, Count
+          Compress-Archive qz-tray/* qz-tray-vcms-2.3.0-windows-x86_64.zip
+          # simulate a user: extract the zip elsewhere and run the install script
+          Expand-Archive qz-tray-vcms-2.3.0-windows-x86_64.zip extracted
+          .\extracted\install-from-zip.ps1 -Dest D:\qz-test
           $v = $null
           foreach ($i in 1..30) { Start-Sleep 2; try { $v = (Invoke-WebRequest http://localhost:8182/ -UseBasicParsing).Content; break } catch {} }
           if ($v -notmatch '<td>version</td>\s*<td>2\.3\.0</td>') { throw "About page missing/wrong: $v" }
-          'OK: portable zip runs'
+          'OK: zip install works'
       - uses: actions/upload-artifact@v4
         with:
           name: qz-tray-vcms-portable
